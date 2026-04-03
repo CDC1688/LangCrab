@@ -11,6 +11,7 @@ import '@xyflow/react/dist/style.css'
 import { useStore } from '../store'
 import { fetchSessionGraph, fetchSession } from '../api'
 import { nodeTypes } from './GraphNode'
+import { edgeTypes } from './CustomEdges'
 import SessionInfoBar from './SessionInfoBar'
 
 export default function InnerGraph() {
@@ -18,6 +19,9 @@ export default function InnerGraph() {
   const graphData = useStore(s => s.graphData)
   const selectNode = useStore(s => s.selectNode)
   const selectedNode = useStore(s => s.selectedNode)
+  const collapsedGroups = useStore(s => s.collapsedGroups)
+  const graphGroups = useStore(s => s.graphGroups)
+  const toggleGroup = useStore(s => s.toggleGroup)
 
   // Step-through state (local, not in global store)
   const [stepping, setStepping] = useState(false)
@@ -61,33 +65,59 @@ export default function InnerGraph() {
     return visible
   }, [stepping, visibleNodes, graphData])
 
-  // Build display nodes
+  // Build set of hidden nodes (children of collapsed groups)
+  const hiddenNodes = useMemo(() => {
+    const hidden = new Set()
+    for (const groupId of collapsedGroups) {
+      const group = graphGroups[groupId]
+      if (group?.children) {
+        for (const childId of group.children) {
+          hidden.add(childId)
+        }
+      }
+    }
+    return hidden
+  }, [collapsedGroups, graphGroups])
+
+  // Build display nodes with group collapse support
   const displayNodes = useMemo(() => {
     if (!graphData?.nodes) return []
-    return graphData.nodes.map(n => {
-      const isCurrent = stepping && nodeOrder[stepIndex] === n.id
-      const isDimmed = stepping && visibleNodes && !visibleNodes.has(n.id)
-      return {
-        ...n,
-        selected: n.id === selectedNode || isCurrent,
-        data: {
-          ...n.data,
-          ...(isDimmed ? { bgColor: '#1e1e2e', borderColor: '#333' } : {}),
-        },
-      }
-    })
-  }, [graphData, selectedNode, stepping, stepIndex, visibleNodes, nodeOrder])
+    return graphData.nodes
+      .filter(n => !hiddenNodes.has(n.id))
+      .map(n => {
+        const isCurrent = stepping && nodeOrder[stepIndex] === n.id
+        const isDimmed = stepping && visibleNodes && !visibleNodes.has(n.id)
+        let extraStyle = {}
+        if (n.type === 'groupNode' && collapsedGroups.has(n.id)) {
+          extraStyle = { height: 50 }
+        }
+        return {
+          ...n,
+          selected: n.id === selectedNode || isCurrent,
+          style: { ...n.style, ...extraStyle },
+          data: {
+            ...n.data,
+            ...(isDimmed ? { bgColor: '#1e1e2e', borderColor: '#333' } : {}),
+          },
+        }
+      })
+  }, [graphData, selectedNode, stepping, stepIndex, visibleNodes, nodeOrder, hiddenNodes, collapsedGroups])
 
   const displayEdges = useMemo(() => {
     if (!graphData?.edges) return []
-    if (!stepping) return graphData.edges
-    return graphData.edges.map(e => ({
-      ...e,
-      style: visibleEdges && visibleEdges.has(e.id)
-        ? e.style
-        : { stroke: '#333', strokeWidth: 1, strokeDasharray: '5,5' },
-    }))
-  }, [graphData, stepping, visibleEdges])
+    let edges = graphData.edges.filter(e =>
+      !hiddenNodes.has(e.source) && !hiddenNodes.has(e.target)
+    )
+    if (stepping) {
+      edges = edges.map(e => ({
+        ...e,
+        style: visibleEdges && visibleEdges.has(e.id)
+          ? e.style
+          : { stroke: '#333', strokeWidth: 1, strokeDasharray: '5,5' },
+      }))
+    }
+    return edges
+  }, [graphData, stepping, visibleEdges, hiddenNodes])
 
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
@@ -96,8 +126,12 @@ export default function InnerGraph() {
   useEffect(() => { setEdges(displayEdges) }, [displayEdges, setEdges])
 
   const onNodeClick = useCallback((_, node) => {
+    if (node.type === 'groupNode') {
+      toggleGroup(node.id)
+      return
+    }
     selectNode(node.id)
-  }, [selectNode])
+  }, [selectNode, toggleGroup])
 
   // Step-through controls
   const startStepThrough = useCallback(() => {
@@ -159,6 +193,8 @@ export default function InnerGraph() {
   const cls = sessionDetail?.classification || {}
   const traceSteps = graphData.nodes.length
   const turns = graphData.turns?.length || 0
+  const retryCount = graphData.retry_loops?.length || 0
+  const groupCount = Object.keys(graphData.groups || {}).length
 
   // Current step info for display
   const currentNodeId = stepping ? nodeOrder[stepIndex] : null
@@ -180,6 +216,8 @@ export default function InnerGraph() {
         <h2>Agent Behavior Trace</h2>
         <span className="graph-subtitle">
           {cls.primary_category} / {cls.subcategory} | {cls.model} | {traceSteps} steps, {turns} turns
+          {retryCount > 0 && ` | ${retryCount} retries`}
+          {groupCount > 0 && ` | ${groupCount} groups`}
         </span>
       </div>
       <div className="replay-controls">
@@ -216,6 +254,7 @@ export default function InnerGraph() {
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           minZoom={0.1}
@@ -233,6 +272,8 @@ export default function InnerGraph() {
               if (st === 'assistant') return '#2E7D32'
               if (st === 'converge') return node.data?.errorCount > 0 ? '#C62828' : '#546E7A'
               if (st === 'classification') return '#4527A0'
+              if (st === 'thinking') return '#78909C'
+              if (st === 'group') return 'rgba(55, 71, 79, 0.3)'
               return '#666'
             }}
           />

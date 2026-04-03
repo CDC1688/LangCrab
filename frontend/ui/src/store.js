@@ -34,6 +34,11 @@ export const useStore = create((set, get) => ({
   // Cross-link support
   logAnalysisSid: null,
 
+  // Group collapse state
+  collapsedGroups: new Set(),
+  graphGroups: {},
+  graphLayers: {},
+
   // WebSocket replay
   replayState: null, // null | 'playing' | 'paused' | 'complete'
   replaySpeed: 1.0,
@@ -94,7 +99,18 @@ export const useStore = create((set, get) => ({
   setFilters: (filters) => set({ filters }),
   setSummary: (summary) => set({ summary }),
   setSessionDetail: (detail) => set({ sessionDetail: detail }),
-  setGraphData: (data) => set({ graphData: data }),
+  setGraphData: (data) => set({
+    graphData: data,
+    graphGroups: data?.groups || {},
+    graphLayers: data?.layers || {},
+    collapsedGroups: new Set(),
+  }),
+  toggleGroup: (groupId) => set((s) => {
+    const next = new Set(s.collapsedGroups)
+    if (next.has(groupId)) next.delete(groupId)
+    else next.add(groupId)
+    return { collapsedGroups: next }
+  }),
   setPipelineGraph: (data) => set({ pipelineGraph: data }),
   setAnnotations: (annotations, progress) => set({ annotations, annotationProgress: progress }),
 

@@ -54,6 +54,9 @@ class TraceGraph(BaseModel):
     edges: list[TraceEdge]
     active_path: list[str]
     node_states: dict[str, dict]
+    groups: dict[str, dict] = {}
+    layers: dict[str, dict] = {}
+    retry_loops: list[dict] = []
 
 
 class TraceEvent(BaseModel):

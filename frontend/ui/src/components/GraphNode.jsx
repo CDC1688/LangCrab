@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Handle, Position } from '@xyflow/react'
 
 // ---- Outer pipeline graph nodes (unchanged) ----
@@ -64,6 +64,8 @@ const STEP_ICONS = {
   tool_result: '📋',
   assistant: '🤖',
   classification: '🏷',
+  thinking: '💭',
+  converge: '◆',
 }
 
 export function AgentNode({ data, selected }) {
@@ -213,10 +215,170 @@ export function ConvergeNode({ data, selected }) {
   )
 }
 
+// ---- Group node (collapsible container for agent actions) ----
+
+const GROUP_THEMES = {
+  tool_fan: { accent: '#E65100', headerBg: 'rgba(230, 81, 0, 0.15)', icon: '🔧' },
+  retry_loop: { accent: '#C62828', headerBg: 'rgba(198, 40, 40, 0.15)', icon: '🔄' },
+  sub_agent: { accent: '#6A1B9A', headerBg: 'rgba(106, 27, 154, 0.15)', icon: '🤖' },
+}
+
+export function GroupNode({ data, selected }) {
+  const {
+    label, groupType, width, height, childCount,
+  } = data
+  const theme = GROUP_THEMES[groupType] || GROUP_THEMES.tool_fan
+
+  return (
+    <div
+      className={`group-node ${groupType} ${selected ? 'selected' : ''}`}
+      style={{
+        borderColor: theme.accent,
+        backgroundColor: 'rgba(30, 30, 46, 0.4)',
+        width: width || 400,
+        height: height || 200,
+        borderWidth: selected ? 2.5 : 1.5,
+        borderStyle: 'dashed',
+        borderRadius: 12,
+        position: 'relative',
+      }}
+    >
+      <Handle type="target" position={Position.Top} />
+      <div
+        className="group-node-header"
+        style={{
+          backgroundColor: theme.headerBg,
+          borderBottom: `1px solid ${theme.accent}40`,
+        }}
+      >
+        <span className="group-node-icon">{theme.icon}</span>
+        <span className="group-node-label" style={{ color: theme.accent }}>{label}</span>
+        <span className="group-node-badge">{childCount} steps</span>
+      </div>
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  )
+}
+
+// ---- Thinking node (agent reasoning before tool calls) ----
+
+export function ThinkingNode({ data, selected }) {
+  const [expanded, setExpanded] = useState(false)
+  const { label, preview, fullContent, borderColor, bgColor } = data
+
+  return (
+    <div
+      className={`thinking-node ${selected ? 'selected' : ''}`}
+      style={{
+        borderColor: borderColor || '#78909C',
+        backgroundColor: bgColor || '#1a1a2e',
+        borderWidth: selected ? 3 : 1.5,
+        borderStyle: 'dashed',
+      }}
+      onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+    >
+      <Handle type="target" position={Position.Top} />
+      <div className="thinking-node-header">
+        <span className="thinking-node-icon">{STEP_ICONS.thinking}</span>
+        <span className="thinking-node-label">{label || 'Agent Reasoning'}</span>
+        <span className="thinking-node-toggle">{expanded ? '▲' : '▼'}</span>
+      </div>
+      <div className={`thinking-node-content ${expanded ? 'expanded' : ''}`}>
+        {expanded
+          ? (fullContent || preview || '').slice(0, 800)
+          : (preview || '').slice(0, 120)
+        }
+        {!expanded && (fullContent || '').length > 120 && '...'}
+      </div>
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  )
+}
+
+// ---- Retry node (agent decision that retries after an error) ----
+
+export function RetryNode({ data, selected }) {
+  const {
+    label, preview, toolNames, retryAttempt,
+    borderColor, bgColor,
+  } = data
+
+  return (
+    <div
+      className={`retry-node ${selected ? 'selected' : ''}`}
+      style={{
+        borderColor: borderColor || '#C62828',
+        backgroundColor: bgColor || '#2a1a1a',
+        borderWidth: selected ? 3 : 1.5,
+        borderLeftWidth: 4,
+        borderLeftColor: '#C62828',
+      }}
+    >
+      <Handle type="target" position={Position.Top} />
+      <div className="retry-node-header">
+        <span className="retry-node-icon">🔄</span>
+        <span className="retry-node-label">{label}</span>
+        {retryAttempt && (
+          <span className="retry-node-attempt">Attempt {retryAttempt}</span>
+        )}
+      </div>
+      {toolNames && (
+        <div className="agent-node-tools">
+          {toolNames.slice(0, 4).map((name, i) => (
+            <span key={i} className="tool-badge retry">{name}</span>
+          ))}
+        </div>
+      )}
+      {preview && (
+        <div className="agent-node-preview tool_calls">
+          {preview.slice(0, 80)}{preview.length > 80 ? '...' : ''}
+        </div>
+      )}
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  )
+}
+
+// ---- Sub-agent node (group variant for sub-agent invocations) ----
+
+export function SubAgentNode({ data, selected }) {
+  const { label, width, height, childCount } = data
+
+  return (
+    <div
+      className={`sub-agent-node ${selected ? 'selected' : ''}`}
+      style={{
+        borderColor: '#6A1B9A',
+        backgroundColor: 'rgba(26, 10, 46, 0.5)',
+        width: width || 400,
+        height: height || 200,
+        borderWidth: selected ? 2.5 : 2,
+        borderStyle: 'solid',
+        borderRadius: 12,
+        position: 'relative',
+      }}
+    >
+      <Handle type="target" position={Position.Top} />
+      <div className="sub-agent-node-header">
+        <span className="sub-agent-node-icon">🤖</span>
+        <span className="sub-agent-node-label">{label || 'Sub-Agent'}</span>
+        {childCount && (
+          <span className="sub-agent-node-badge">{childCount} steps</span>
+        )}
+      </div>
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  )
+}
+
 export const nodeTypes = {
   graphNode: GraphNode,
   startEnd: StartEndNode,
   agentNode: AgentNode,
   agentNodeWide: AgentNodeWide,
   convergeNode: ConvergeNode,
+  groupNode: GroupNode,
+  thinkingNode: ThinkingNode,
+  retryNode: RetryNode,
+  subAgentNode: SubAgentNode,
 }

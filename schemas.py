@@ -56,8 +56,8 @@ class Classification(BaseModel):
     user_intent_summary: str = Field(
         description="1-2 sentence summary of what the user is trying to do"
     )
-    language: Literal["zh", "en", "mixed"] = Field(
-        description="Primary language of the user messages"
+    language: str = Field(
+        description="Primary language of the user messages: 'english', 'chinese', or language name in lowercase for others (e.g., 'russian', 'malay', 'japanese')"
     )
     is_cron_triggered: bool = Field(
         description="Whether this session was triggered by a cron/scheduled task"
@@ -118,6 +118,8 @@ class RowState(TypedDict):
 class PipelineState(TypedDict):
     csv_paths: list[str]  # one or more CSV files
     limit: int  # 0 = all rows, per file
+    continue_mode: bool  # resume from previous run
     rows: list[dict]
     classifications: Annotated[list[dict], operator.add]
+    prior_classifications: list[dict]  # loaded from previous run
     summary: dict | None

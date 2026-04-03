@@ -83,18 +83,38 @@ def _get_client():
 
 
 def load_csv(state: PipelineState) -> dict:
-    """Load and parse CSV file(s)."""
+    """Load and parse CSV file(s). In continue mode, load prior results and skip done sids."""
     csv_paths = state["csv_paths"]
     limit = state.get("limit", 0)
+    continue_mode = state.get("continue_mode", False)
     rows = parse_multiple_csvs(csv_paths, limit=limit)
     print(f"Loaded {len(rows)} rows total from {len(csv_paths)} file(s)")
-    # Truncate incremental output files for fresh run
-    get_output_dir().mkdir(parents=True, exist_ok=True)
-    for f in [get_classifications_file(), get_output_dir() / "inner_graph_details.jsonl",
-              get_error_report_file(), get_validation_errors_file()]:
-        f.write_text("")
+
+    prior_classifications: list[dict] = []
+
+    if continue_mode and get_classifications_file().exists():
+        # Load already-classified sids from previous run
+        with open(get_classifications_file(), "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        prior_classifications.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        done_sids = {c["sid"] for c in prior_classifications if "sid" in c}
+        before = len(rows)
+        rows = [r for r in rows if r["sid"] not in done_sids]
+        print(f"Continue mode: {len(done_sids)} already classified, {before - len(rows)} skipped, {len(rows)} remaining")
+    else:
+        # Fresh run — truncate incremental output files
+        get_output_dir().mkdir(parents=True, exist_ok=True)
+        for f in [get_classifications_file(), get_output_dir() / "inner_graph_details.jsonl",
+                  get_error_report_file(), get_validation_errors_file()]:
+            f.write_text("")
+
     _init_progress(len(rows))
-    return {"rows": rows}
+    return {"rows": rows, "prior_classifications": prior_classifications}
 
 
 def fan_out_to_classify(state: PipelineState) -> list[Send]:
@@ -139,13 +159,21 @@ def fan_out_to_classify(state: PipelineState) -> list[Send]:
 def aggregate_results(state: PipelineState) -> dict:
     """Aggregate all classifications and write output files."""
     _close_progress()
-    classifications = state.get("classifications", [])
+    prior = state.get("prior_classifications", [])
+    new_classifications = state.get("classifications", [])
+    classifications = prior + new_classifications
+    if prior:
+        print(f"\nMerging {len(prior)} prior + {len(new_classifications)} new = {len(classifications)} total")
     print(f"\nAggregating {len(classifications)} classifications...")
 
     # Ensure output dir exists
     get_output_dir().mkdir(parents=True, exist_ok=True)
 
-    # classifications.jsonl already written incrementally by format_result
+    # Rewrite full classifications.jsonl (prior + new) so it's consistent with summary
+    if prior:
+        with open(get_classifications_file(), "w", encoding="utf-8") as f:
+            for c in classifications:
+                f.write(json.dumps(c, ensure_ascii=False) + "\n")
 
     # Build summary
     summary = _build_summary(classifications)
@@ -411,8 +439,8 @@ def _parse_classification(raw: str) -> Classification:
     }
     if parsed.get("primary_category") not in valid_categories:
         parsed["primary_category"] = "other"
-    if parsed.get("language") not in ("zh", "en", "mixed"):
-        parsed["language"] = "mixed"
+    if not parsed.get("language"):
+        parsed["language"] = "unknown"
     if parsed.get("confidence") not in ("high", "medium", "low"):
         parsed["confidence"] = "medium"
 
@@ -446,13 +474,13 @@ def validate(state: RowState) -> dict:
             1 for ch in user_text if unicodedata.category(ch).startswith("Lo")
         )
         cjk_ratio = cjk_count / max(len(user_text), 1)
-        if cjk_ratio > 0.3 and classification.language == "en":
+        if cjk_ratio > 0.3 and classification.language in ("en", "english"):
             errors.append(
-                f"Text is {cjk_ratio:.0%} CJK characters but language='en'"
+                f"Text is {cjk_ratio:.0%} CJK characters but language='{classification.language}'"
             )
-        if cjk_ratio < 0.05 and classification.language == "zh":
+        if cjk_ratio < 0.05 and classification.language in ("zh", "chinese"):
             errors.append(
-                f"Text is only {cjk_ratio:.0%} CJK characters but language='zh'"
+                f"Text is only {cjk_ratio:.0%} CJK characters but language='{classification.language}'"
             )
 
     # Check 4: Intent summary quality

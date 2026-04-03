@@ -32,6 +32,12 @@ Provide a specific subcategory within the primary category. Examples:
 4. Keep user_intent_summary concise (1-2 sentences).
 5. Set confidence="high" when signals are clear, "medium" when ambiguous, "low" when guessing.
 
+## Language Detection
+Detect the primary language of the user messages:
+- "english" for English
+- "chinese" for Chinese
+- For any other language, use the language name in lowercase (e.g., "russian", "malay", "japanese", "korean", "spanish", "french", "arabic", "thai", etc.)
+
 ## Output Format
 You MUST respond with a JSON object only, no other text. Example:
 ```json

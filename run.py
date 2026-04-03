@@ -43,6 +43,12 @@ def main():
         action="store_true",
         help="Disable checkpointing",
     )
+    parser.add_argument(
+        "--continue",
+        dest="continue_run",
+        action="store_true",
+        help="Resume from previous run — skip already-classified rows in classifications.jsonl",
+    )
     args = parser.parse_args()
 
     # Set OUTPUT_DIR before importing graph/nodes (they read it at import time via config.py)
@@ -78,8 +84,10 @@ def main():
         {
             "csv_paths": args.csv,
             "limit": args.limit,
+            "continue_mode": args.continue_run,
             "rows": [],
             "classifications": [],
+            "prior_classifications": [],
             "summary": None,
         },
         config,
