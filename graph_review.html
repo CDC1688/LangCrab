@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenClaw Log Analyzer - Graph Architecture Review</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #21262d;
+    --border: #30363d; --text: #e6edf3; --text2: #8b949e;
+    --blue: #58a6ff; --green: #3fb950; --purple: #bc8cff;
+    --orange: #d29922; --red: #f85149; --cyan: #39d2c0;
+    --pink: #f778ba; --yellow: #e3b341;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); overflow-x: hidden; }
+
+  /* Header */
+  .header { padding: 24px 40px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; }
+  .header h1 { font-size: 22px; font-weight: 600; }
+  .header .subtitle { color: var(--text2); font-size: 14px; }
+
+  /* Tab navigation */
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); padding: 0 40px; background: var(--surface); }
+  .tab { padding: 12px 24px; cursor: pointer; color: var(--text2); border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; transition: all 0.2s; }
+  .tab:hover { color: var(--text); background: var(--surface2); }
+  .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+  /* Canvas container */
+  .canvas-container { display: flex; justify-content: center; padding: 40px; min-height: calc(100vh - 120px); }
+  .canvas-container.hidden { display: none; }
+
+  /* SVG styles */
+  svg { font-family: 'Segoe UI', system-ui, sans-serif; }
+  .node-rect { rx: 8; ry: 8; stroke-width: 2; cursor: pointer; transition: filter 0.2s; }
+  .node-rect:hover { filter: brightness(1.2); }
+  .node-label { font-size: 13px; font-weight: 600; fill: var(--text); pointer-events: none; }
+  .node-sublabel { font-size: 10.5px; fill: var(--text2); pointer-events: none; }
+  .node-detail { font-size: 9.5px; fill: #6e7681; pointer-events: none; }
+  .edge-line { stroke-width: 2; fill: none; }
+  .edge-label { font-size: 10px; fill: var(--text2); }
+  .arrow { fill: var(--text2); }
+  .group-rect { rx: 12; ry: 12; stroke-width: 1.5; stroke-dasharray: 6 3; fill-opacity: 0.04; }
+  .group-label { font-size: 12px; font-weight: 600; fill-opacity: 0.7; }
+  .legend-box { rx: 4; ry: 4; }
+  .legend-text { font-size: 11px; fill: var(--text2); }
+  .annotation { font-size: 10px; fill: var(--orange); font-style: italic; }
+  .section-title { font-size: 16px; font-weight: 700; fill: var(--text); }
+  .section-subtitle { font-size: 11px; fill: var(--text2); }
+  .connector-label { font-size: 9px; fill: var(--cyan); font-weight: 500; }
+  .data-flow { font-size: 9px; fill: var(--green); }
+  .state-field { font-size: 9.5px; fill: #7ee787; font-family: 'SF Mono', 'Fira Code', monospace; }
+  .warn-text { font-size: 9.5px; fill: var(--orange); }
+  .issue-marker { font-size: 10px; fill: var(--red); font-weight: 700; }
+
+  /* Tooltip */
+  .tooltip { position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; max-width: 380px; font-size: 13px; line-height: 1.5; z-index: 100; pointer-events: none; opacity: 0; transition: opacity 0.15s; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .tooltip.visible { opacity: 1; }
+  .tooltip h4 { color: var(--blue); margin-bottom: 6px; font-size: 13px; }
+  .tooltip .field { color: var(--text2); }
+  .tooltip .field b { color: var(--text); }
+  .tooltip code { background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-size: 12px; color: var(--green); }
+
+  /* Side panel */
+  .side-panel { position: fixed; right: 0; top: 0; width: 420px; height: 100vh; background: var(--surface); border-left: 1px solid var(--border); padding: 24px; overflow-y: auto; transform: translateX(100%); transition: transform 0.3s; z-index: 50; }
+  .side-panel.open { transform: translateX(0); }
+  .side-panel h3 { font-size: 16px; margin-bottom: 12px; color: var(--blue); }
+  .side-panel .close-btn { position: absolute; top: 16px; right: 16px; background: none; border: none; color: var(--text2); cursor: pointer; font-size: 20px; }
+  .side-panel .section { margin-bottom: 20px; }
+  .side-panel .section h4 { font-size: 13px; color: var(--purple); margin-bottom: 8px; }
+  .side-panel pre { background: var(--surface2); padding: 12px; border-radius: 6px; font-size: 12px; overflow-x: auto; line-height: 1.5; color: var(--green); }
+  .side-panel .field-row { display: flex; gap: 8px; margin-bottom: 4px; font-size: 12px; }
+  .side-panel .field-row .key { color: var(--text2); min-width: 100px; }
+  .side-panel .field-row .val { color: var(--text); }
+  .side-panel .issue-box { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.3); border-radius: 6px; padding: 10px 12px; margin-top: 8px; font-size: 12px; color: var(--red); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>OpenClaw Log Analyzer</h1>
+  <span class="subtitle">Graph Architecture Review &mdash; click any node for details</span>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('full')">Full Architecture</div>
+  <div class="tab" onclick="showTab('outer')">Outer Pipeline</div>
+  <div class="tab" onclick="showTab('inner')">Inner Self-Correction</div>
+  <div class="tab" onclick="showTab('trace')">Agent Trace Layer</div>
+  <div class="tab" onclick="showTab('data')">Data Flow &amp; State</div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<!-- ============================================================ -->
+<!-- TAB 1: Full Architecture -->
+<!-- ============================================================ -->
+<div class="canvas-container" id="tab-full">
+<svg viewBox="0 0 1400 1500" width="1400" height="1500">
+  <!-- Title -->
+  <text x="700" y="35" text-anchor="middle" class="section-title">Complete Pipeline Architecture</text>
+  <text x="700" y="55" text-anchor="middle" class="section-subtitle">Outer Pipeline (left) &rarr; Inner Graph per row (center) &rarr; Agent Trace Layer (right)</text>
+
+  <!-- ===== OUTER PIPELINE (left) ===== -->
+  <rect x="40" y="80" width="340" height="780" class="group-rect" stroke="var(--green)" fill="var(--green)"/>
+  <text x="60" y="105" class="group-label" fill="var(--green)">OUTER PIPELINE GRAPH (PipelineState)</text>
+
+  <!-- START -->
+  <rect x="140" y="130" width="140" height="40" class="node-rect" fill="var(--surface2)" stroke="var(--green)"
+    data-tip="<h4>START</h4><div class='field'>LangGraph entry point.<br>Receives initial <code>PipelineState</code>:<br>&bull; <b>csv_paths</b>: list of CSV files<br>&bull; <b>limit</b>: rows per file (0=all)<br>&bull; <b>rows</b>: [] (empty)<br>&bull; <b>classifications</b>: [] (empty)</div>"/>
+  <text x="210" y="155" text-anchor="middle" class="node-label">START</text>
+
+  <!-- Arrow START -> load_csv -->
+  <line x1="210" y1="170" x2="210" y2="200" class="edge-line" stroke="var(--green)"/>
+  <polygon points="204,195 210,205 216,195" class="arrow" fill="var(--green)"/>
+
+  <!-- load_csv -->
+  <rect x="110" y="205" width="200" height="60" class="node-rect" fill="var(--surface2)" stroke="var(--green)"
+    data-tip="<h4>load_csv</h4><div class='field'><b>File:</b> <code>nodes.py:85-97</code><br><b>Does:</b><br>1. Calls <code>parse_multiple_csvs()</code> with multiprocessing<br>2. Per row: parses request/response JSON, extracts signals, tool errors, tokens<br>3. Truncates output files (classifications, errors, etc.)<br>4. Initializes tqdm progress bar<br><br><b>Returns:</b> <code>{rows: [...]}</code> &mdash; list of parsed row dicts<br><br><b>Issue:</b> Truncates output files &mdash; no run history preserved</div>"/>
+  <text x="210" y="230" text-anchor="middle" class="node-label">load_csv</text>
+  <text x="210" y="248" text-anchor="middle" class="node-sublabel">parse CSV + extract signals</text>
+  <text x="315" y="225" class="issue-marker">!</text>
+
+  <!-- Arrow load_csv -> fan_out -->
+  <line x1="210" y1="265" x2="210" y2="300" class="edge-line" stroke="var(--green)"/>
+  <polygon points="204,295 210,305 216,295" class="arrow" fill="var(--green)"/>
+  <text x="225" y="287" class="data-flow">{rows: [...]}</text>
+
+  <!-- fan_out -->
+  <rect x="110" y="305" width="200" height="60" class="node-rect" fill="var(--surface2)" stroke="var(--blue)"
+    data-tip="<h4>fan_out_to_classify</h4><div class='field'><b>File:</b> <code>nodes.py:100-136</code><br><b>Does:</b><br>Creates <code>Send('classify_row', {...})</code> for each row.<br>This is LangGraph's fan-out &mdash; each Send triggers the inner subgraph independently.<br><br><b>Copies 20+ fields</b> manually from parsed row dict into Send payload.<br><br><b>Issue:</b> Fragile field copying &mdash; if <code>_parse_row</code> adds a field, it&rsquo;s silently dropped here.</div>"/>
+  <text x="210" y="330" text-anchor="middle" class="node-label">fan_out_to_classify</text>
+  <text x="210" y="348" text-anchor="middle" class="node-sublabel">Send() per row &rarr; inner graph</text>
+  <text x="315" y="325" class="issue-marker">!</text>
+
+  <!-- Fan-out arrows (multiple) to inner graph -->
+  <line x1="310" y1="335" x2="440" y2="335" class="edge-line" stroke="var(--blue)" stroke-dasharray="6 3"/>
+  <line x1="310" y1="335" x2="440" y2="285" class="edge-line" stroke="var(--blue)" stroke-dasharray="6 3" opacity="0.5"/>
+  <line x1="310" y1="335" x2="440" y2="385" class="edge-line" stroke="var(--blue)" stroke-dasharray="6 3" opacity="0.5"/>
+  <polygon points="434,330 444,335 434,340" class="arrow" fill="var(--blue)"/>
+  <text x="370" y="315" class="connector-label">Send x N</text>
+
+  <!-- Arrow fan_out -> (return to) aggregate -->
+  <!-- (shown as dashed because actual flow goes through inner graph) -->
+
+  <!-- aggregate -->
+  <rect x="110" y="720" width="200" height="60" class="node-rect" fill="var(--surface2)" stroke="var(--green)"
+    data-tip="<h4>aggregate_results</h4><div class='field'><b>File:</b> <code>nodes.py:139-185</code><br><b>Does:</b><br>1. Closes progress bar<br>2. Collects all classifications via <code>operator.add</code> reducer<br>3. Builds <code>summary.json</code>: category counts, model cross-tab, error stats, token usage<br>4. Prints summary to console<br><br><b>Issue:</b> Computes <code>model_category</code> cross-tab but frontend never visualizes it. No temporal or per-account analysis.</div>"/>
+  <text x="210" y="745" text-anchor="middle" class="node-label">aggregate_results</text>
+  <text x="210" y="763" text-anchor="middle" class="node-sublabel">build summary.json</text>
+
+  <!-- Arrow aggregate -> END -->
+  <line x1="210" y1="780" x2="210" y2="810" class="edge-line" stroke="var(--green)"/>
+  <polygon points="204,805 210,815 216,805" class="arrow" fill="var(--green)"/>
+
+  <!-- END -->
+  <rect x="140" y="815" width="140" height="40" class="node-rect" fill="var(--surface2)" stroke="var(--green)"
+    data-tip="<h4>END</h4><div class='field'>Pipeline complete.<br>Output files:<br>&bull; <code>classifications.jsonl</code> (written incrementally)<br>&bull; <code>summary.json</code><br>&bull; <code>inner_graph_details.jsonl</code><br>&bull; <code>error_report.jsonl</code><br>&bull; <code>validation_errors.jsonl</code></div>"/>
+  <text x="210" y="840" text-anchor="middle" class="node-label">END</text>
+
+
+  <!-- ===== INNER GRAPH (center) ===== -->
+  <rect x="430" y="80" width="420" height="780" class="group-rect" stroke="var(--purple)" fill="var(--purple)"/>
+  <text x="450" y="105" class="group-label" fill="var(--purple)">INNER GRAPH &mdash; per row (RowState)</text>
+  <text x="450" y="120" class="section-subtitle">Self-correction loop, max 3 iterations</text>
+
+  <!-- inner START -->
+  <rect x="575" y="145" width="120" height="36" class="node-rect" fill="var(--surface2)" stroke="var(--purple)"
+    data-tip="<h4>Inner START</h4><div class='field'>Receives one row's data as <code>RowState</code>:<br>sid, account, model, event_time, user_messages_text, tool_names_used, tool_errors, etc.<br>Plus control fields: <code>error='no'</code>, <code>messages=[]</code>, <code>iterations=0</code></div>"/>
+  <text x="635" y="168" text-anchor="middle" class="node-label">START</text>
+
+  <!-- Arrow inner START -> extract_signal -->
+  <line x1="635" y1="181" x2="635" y2="210" class="edge-line" stroke="var(--purple)"/>
+  <polygon points="629,205 635,215 641,205" class="arrow" fill="var(--purple)"/>
+
+  <!-- extract_signal -->
+  <rect x="535" y="215" width="200" height="60" class="node-rect" fill="var(--surface2)" stroke="var(--purple)"
+    data-tip="<h4>extract_signal</h4><div class='field'><b>File:</b> <code>nodes.py:280-318</code><br><b>Two paths:</b><br><br><b>Path A &mdash; Heuristic:</b><br>If <code>is_heartbeat_or_bootstrap(user_text)</code> matches patterns like 'HEARTBEAT.md', returns pre-built Classification(system_maintenance/heartbeat) immediately. Skips LLM.<br><br><b>Path B &mdash; LLM needed:</b><br>Builds classification prompt from <code>CLASSIFY_SYSTEM_PROMPT</code> + <code>CLASSIFY_USER_TEMPLATE</code>.<br>Template includes: system_prompt_summary, user_messages_text, tool_names_used, message counts, flags.<br><br><b>Returns:</b> either <code>{classification: ...}</code> (heuristic) or <code>{messages: [SystemMsg, HumanMsg]}</code> (LLM path)<br><br><b>Issues:</b><br>&bull; Truncates system_prompt to 500 chars again (already done in parser)<br>&bull; Empty user_text &rarr; classified as heartbeat (may be malformed session)</div>"/>
+  <text x="635" y="240" text-anchor="middle" class="node-label">extract_signal</text>
+  <text x="635" y="258" text-anchor="middle" class="node-sublabel">heuristic check + build prompt</text>
+
+  <!-- Conditional edges from extract_signal -->
+  <!-- Path A: already_classified -> format_result -->
+  <path d="M 535 245 Q 470 245 470 560 Q 470 650 535 650" class="edge-line" stroke="var(--cyan)" stroke-dasharray="6 3"/>
+  <polygon points="530,645 540,650 530,655" class="arrow" fill="var(--cyan)"/>
+  <text x="455" y="420" class="connector-label" transform="rotate(-90, 455, 420)">already_classified (heuristic)</text>
+
+  <!-- Path B: needs_llm -> classify -->
+  <line x1="635" y1="275" x2="635" y2="320" class="edge-line" stroke="var(--purple)"/>
+  <polygon points="629,315 635,325 641,315" class="arrow" fill="var(--purple)"/>
+  <text x="650" y="300" class="connector-label">needs_llm</text>
+
+  <!-- classify -->
+  <rect x="535" y="325" width="200" height="65" class="node-rect" fill="var(--surface2)" stroke="var(--blue)"
+    data-tip="<h4>classify</h4><div class='field'><b>File:</b> <code>nodes.py:328-363</code><br><b>LLM call</b> via OpenAI-compatible client (VolcEngine ARK).<br><b>Temperature:</b> 0 (deterministic)<br><b>Retry policy:</b> 3 attempts, exponential backoff (for API failures)<br><br><b>Steps:</b><br>1. Convert LangChain messages &rarr; OpenAI format<br>2. Call <code>client.chat.completions.create()</code><br>3. Parse JSON from response (<code>_parse_classification</code>)<br>4. Append attempt as HumanMessage to conversation<br><br><b>Issues:</b><br>&bull; Classification attempt stored as <code>HumanMessage</code> instead of <code>AIMessage</code> &mdash; confuses LLM in retry<br>&bull; Worst case: 3 self-correction x 3 API retries = 9 LLM calls per row</div>"/>
+  <text x="635" y="352" text-anchor="middle" class="node-label">classify</text>
+  <text x="635" y="370" text-anchor="middle" class="node-sublabel">LLM call + JSON parse</text>
+  <text x="635" y="384" text-anchor="middle" class="node-detail">RetryPolicy(3) for API failures</text>
+  <text x="740" y="345" class="issue-marker">!</text>
+
+  <!-- Arrow classify -> validate -->
+  <line x1="635" y1="390" x2="635" y2="430" class="edge-line" stroke="var(--purple)"/>
+  <polygon points="629,425 635,435 641,425" class="arrow" fill="var(--purple)"/>
+
+  <!-- validate -->
+  <rect x="535" y="435" width="200" height="75" class="node-rect" fill="var(--surface2)" stroke="var(--orange)"
+    data-tip="<h4>validate</h4><div class='field'><b>File:</b> <code>nodes.py:422-490</code><br><b>5 programmatic checks:</b><br>1. feishu tools &rarr; must be 'communication'<br>2. [cron:] prefix &rarr; is_cron_triggered=true<br>3. CJK ratio vs language field<br>4. Intent summary &ge; 10 chars<br>5. 'coding' category needs coding tools<br><br><b>If errors:</b> logs to validation_errors.jsonl, returns error feedback HumanMessage<br><b>If OK:</b> returns <code>{error: 'no'}</code><br><br><b>Issues:</b><br>&bull; Checks are one-directional (feishu&rarr;comm but not comm&rarr;feishu)<br>&bull; Coding tool set too narrow (misses bash, shell, python, run_command)<br>&bull; No is_subagent consistency check</div>"/>
+  <text x="635" y="462" text-anchor="middle" class="node-label">validate</text>
+  <text x="635" y="480" text-anchor="middle" class="node-sublabel">5 programmatic consistency checks</text>
+  <text x="635" y="498" text-anchor="middle" class="node-detail">feishu/cron/CJK/intent/coding-tools</text>
+  <text x="740" y="455" class="issue-marker">!</text>
+
+  <!-- Conditional edges from validate (decide_to_finish) -->
+  <!-- retry loop back to classify -->
+  <path d="M 735 470 Q 790 470 790 360 Q 790 340 735 350" class="edge-line" stroke="var(--red)"/>
+  <polygon points="740,345 730,350 740,355" class="arrow" fill="var(--red)"/>
+  <text x="798" y="400" class="connector-label" fill="var(--red)">retry</text>
+  <text x="798" y="415" class="node-detail">(error='yes' &amp;&amp;</text>
+  <text x="798" y="427" class="node-detail"> iter &lt; MAX_ITERATIONS)</text>
+
+  <!-- end path -> decide_to_finish -> format_result -->
+  <line x1="635" y1="510" x2="635" y2="540" class="edge-line" stroke="var(--green)"/>
+  <text x="650" y="530" class="connector-label" fill="var(--green)">end</text>
+
+  <!-- decide_to_finish (small diamond) -->
+  <polygon points="635,540 655,555 635,570 615,555" fill="var(--surface2)" stroke="var(--orange)" stroke-width="2"/>
+  <text x="635" y="559" text-anchor="middle" font-size="8" fill="var(--orange)" font-weight="bold">?</text>
+  <text x="570" y="560" class="node-detail" fill="var(--orange)">decide_to_finish</text>
+
+  <line x1="635" y1="570" x2="635" y2="620" class="edge-line" stroke="var(--green)"/>
+  <polygon points="629,615 635,625 641,615" class="arrow" fill="var(--green)"/>
+
+  <!-- format_result -->
+  <rect x="535" y="625" width="200" height="70" class="node-rect" fill="var(--surface2)" stroke="var(--green)"
+    data-tip="<h4>format_result</h4><div class='field'><b>File:</b> <code>nodes.py:556-595</code><br><b>Does:</b><br>1. Packages classification dict with metadata<br>2. Writes to <code>classifications.jsonl</code> (thread-safe, locked)<br>3. Writes to <code>inner_graph_details.jsonl</code> (NOT locked!)<br>4. Writes to <code>error_report.jsonl</code> if errors (NOT locked!)<br>5. Ticks progress bar<br>6. Returns <code>{classifications: [result]}</code> for outer graph reducer<br><br><b>Issue:</b> Only <code>classifications.jsonl</code> write is locked. Other file writes under concurrency=80 can corrupt.</div>"/>
+  <text x="635" y="652" text-anchor="middle" class="node-label">format_result</text>
+  <text x="635" y="670" text-anchor="middle" class="node-sublabel">write JSONL + return to outer</text>
+  <text x="635" y="685" text-anchor="middle" class="node-detail">classifications.jsonl (locked), inner_details &amp; error_report (unlocked!)</text>
+  <text x="740" y="645" class="issue-marker">!</text>
+
+  <!-- Arrow format_result -> inner END -->
+  <line x1="635" y1="695" x2="635" y2="730" class="edge-line" stroke="var(--green)"/>
+  <polygon points="629,725 635,735 641,725" class="arrow" fill="var(--green)"/>
+
+  <!-- inner END -->
+  <rect x="575" y="735" width="120" height="36" class="node-rect" fill="var(--surface2)" stroke="var(--green)"
+    data-tip="<h4>Inner END</h4><div class='field'>Classification complete for this row.<br>Output collected by outer graph via <code>operator.add</code> reducer on <code>classifications</code> field.</div>"/>
+  <text x="635" y="758" text-anchor="middle" class="node-label">END</text>
+
+  <!-- Return arrow from inner END -> aggregate -->
+  <path d="M 575 753 Q 420 753 350 740 Q 310 735 310 735" class="edge-line" stroke="var(--green)" stroke-dasharray="6 3"/>
+  <polygon points="315,730 305,735 315,740" class="arrow" fill="var(--green)"/>
+  <text x="400" y="770" class="connector-label" fill="var(--green)">classifications: [result]</text>
+  <text x="400" y="785" class="connector-label" fill="var(--green)">via operator.add reducer</text>
+
+
+  <!-- ===== AGENT TRACE LAYER (right) ===== -->
+  <rect x="900" y="80" width="460" height="780" class="group-rect" stroke="var(--cyan)" fill="var(--cyan)"/>
+  <text x="920" y="105" class="group-label" fill="var(--cyan)">AGENT TRACE LAYER (from CSV request JSON)</text>
+  <text x="920" y="120" class="section-subtitle">What the LLM agent actually did &mdash; extracted by extract_traces.py</text>
+
+  <!-- system_prompt -->
+  <rect x="940" y="150" width="390" height="50" class="node-rect" fill="var(--surface2)" stroke="#7B1FA2"
+    data-tip="<h4>System Prompt</h4><div class='field'><b>Trace type:</b> <code>system</code><br>The agent's system prompt from <code>messages[0]</code>.<br>Truncated to 500 chars in trace.<br><br><b>Visual:</b> Purple node, wide format in React Flow.<br><b>Role in classification:</b> Extracted as <code>system_prompt_summary</code>, used in LLM prompt.</div>"/>
+  <text x="960" y="175" class="node-label" fill="#CE93D8">System Prompt</text>
+  <text x="960" y="192" class="node-sublabel">role=system | agent instructions | truncated 500 chars</text>
+
+  <!-- Arrow -->
+  <line x1="1135" y1="200" x2="1135" y2="225" class="edge-line" stroke="#7B1FA2"/>
+  <polygon points="1129,220 1135,230 1141,220" class="arrow" fill="#7B1FA2"/>
+
+  <!-- user_message -->
+  <rect x="940" y="230" width="390" height="50" class="node-rect" fill="var(--surface2)" stroke="#1565C0"
+    data-tip="<h4>User Message</h4><div class='field'><b>Trace type:</b> <code>user</code><br>The human user's request / instruction to the agent.<br>Truncated to 1000 chars in trace.<br><br><b>Visual:</b> Blue node, wide format.<br><b>Role in classification:</b> Extracted as <code>user_messages_text</code> (first + last user message, up to 3000 chars).<br><b>Cron detection:</b> if starts with <code>[cron:]</code> prefix.<br><b>Subagent detection:</b> if contains 'Subagent' or 'sub-agent'.</div>"/>
+  <text x="960" y="255" class="node-label" fill="#64B5F6">User Message</text>
+  <text x="960" y="272" class="node-sublabel">role=user | initial request, follow-ups, cron triggers</text>
+
+  <!-- Arrow -->
+  <line x1="1135" y1="280" x2="1135" y2="310" class="edge-line" stroke="#1565C0"/>
+  <polygon points="1129,305 1135,315 1141,305" class="arrow" fill="#1565C0"/>
+
+  <!-- TURN group -->
+  <rect x="955" y="315" width="370" height="290" class="group-rect" stroke="var(--text2)" fill="var(--text2)"/>
+  <text x="975" y="337" class="group-label" fill="var(--text2)">TURN (repeats N times)</text>
+
+  <!-- Agent -> Tool Calls -->
+  <rect x="975" y="350" width="160" height="55" class="node-rect" fill="var(--surface2)" stroke="#388E3C"
+    data-tip="<h4>Agent &rarr; Tool Calls</h4><div class='field'><b>Trace type:</b> <code>tool_calls</code><br>Assistant message with <code>tool_calls</code> array.<br>Each call has: name, arguments (parsed JSON, truncated).<br><br><b>Visual:</b> Green node, indented right in React Flow.<br><b>Role in classification:</b> Tool names extracted as <code>tool_names_used</code> set.</div>"/>
+  <text x="995" y="375" class="node-label" fill="#81C784">Agent &rarr; Tools</text>
+  <text x="995" y="395" class="node-sublabel">tool_calls: [{name, args}]</text>
+
+  <!-- Arrow -->
+  <line x1="1055" y1="405" x2="1055" y2="425" class="edge-line" stroke="#388E3C"/>
+  <polygon points="1049,420 1055,430 1061,420" class="arrow" fill="#388E3C"/>
+
+  <!-- Tool Result (success) -->
+  <rect x="975" y="430" width="160" height="50" class="node-rect" fill="var(--surface2)" stroke="#2E7D32"
+    data-tip="<h4>Tool Result (Success)</h4><div class='field'><b>Trace type:</b> <code>tool_result</code>, <code>is_error=false</code><br>The tool's response. Content truncated to 500 chars.<br><br><b>Error detection:</b> Checks structural indicators, exit codes, error keywords &mdash; with false-positive filtering for content-returning tools (read, web_fetch, etc.)</div>"/>
+  <text x="995" y="455" class="node-label" fill="#A5D6A7">Tool Result</text>
+  <text x="995" y="472" class="node-sublabel">role=tool | success</text>
+
+  <!-- Tool Result (error) -->
+  <rect x="1165" y="430" width="145" height="50" class="node-rect" fill="var(--surface2)" stroke="#C62828"
+    data-tip="<h4>Tool Result (Error)</h4><div class='field'><b>Trace type:</b> <code>tool_result</code>, <code>is_error=true</code><br>Red node in React Flow.<br>Error categorized: permission_error, not_found, timeout, python_exception, command_failed, missing_api_key, rate_limit, connection_error, syntax_error, fatal_error, other_error<br><br><b>Recovery tracking:</b> If same tool succeeds later, <code>recovered=true</code> with recovery_position.</div>"/>
+  <text x="1185" y="455" class="node-label" fill="#EF9A9A">Tool Error</text>
+  <text x="1185" y="472" class="node-sublabel">is_error=true</text>
+
+  <!-- Arrow back up (loop) -->
+  <path d="M 1055 480 Q 1055 500 1055 515 Q 1055 530 980 530 Q 940 530 940 375 Q 940 350 975 370" class="edge-line" stroke="var(--text2)" stroke-dasharray="4 3"/>
+  <text x="920" y="465" class="node-detail" fill="var(--text2)">repeat</text>
+
+  <!-- Agent Response -->
+  <rect x="975" y="545" width="330" height="50" class="node-rect" fill="var(--surface2)" stroke="#2E7D32"
+    data-tip="<h4>Agent Response</h4><div class='field'><b>Trace type:</b> <code>assistant</code> (no tool_calls)<br>The agent's text response to the user after completing tool work.<br>Truncated to 1000 chars in trace.<br><br><b>Visual:</b> Green node, wide format in React Flow.</div>"/>
+  <text x="995" y="570" class="node-label" fill="#A5D6A7">Agent Response</text>
+  <text x="995" y="587" class="node-sublabel">role=assistant | final text to user (no tool_calls)</text>
+
+  <!-- Subagent box -->
+  <rect x="955" y="625" width="370" height="100" class="group-rect" stroke="var(--pink)" fill="var(--pink)"/>
+  <text x="975" y="648" class="group-label" fill="var(--pink)">SUBAGENT (detected by keyword in user messages)</text>
+
+  <rect x="975" y="660" width="330" height="50" class="node-rect" fill="var(--surface2)" stroke="var(--pink)"
+    data-tip="<h4>Subagent Sessions</h4><div class='field'><b>Detection:</b> keyword matching in user messages:<br>&bull; 'Subagent' or 'sub-agent' in content<br><br><b>How it works:</b> A parent agent session spawns a child session. The child session appears as a separate CSV row with its own SID. Detection relies on the parent including 'Subagent' in the child's user message.<br><br><b>In classification:</b> <code>is_subagent=true</code> flag, used as context for LLM.<br><br><b>Limitation:</b> No parent&rarr;child link tracked. Each session classified independently. No graph showing orchestration topology.</div>"/>
+  <text x="995" y="685" class="node-label" fill="var(--pink)">Subagent Session</text>
+  <text x="995" y="702" class="node-sublabel">Separate CSV row | is_subagent=true | no parent link tracked</text>
+
+  <!-- Classification result -->
+  <rect x="955" y="755" width="370" height="50" class="node-rect" fill="var(--surface2)" stroke="#4527A0"
+    data-tip="<h4>Classification Node</h4><div class='field'><b>Added by</b> <code>trace_builder.py</code> at the end of the graph.<br>Shows the LLM's classification result:<br>&bull; primary_category, subcategory<br>&bull; user_intent_summary<br>&bull; confidence, language<br><br>Connected with dashed purple edge to the last trace step.</div>"/>
+  <text x="975" y="780" class="node-label" fill="#B39DDB">Classification Result</text>
+  <text x="975" y="797" class="node-sublabel">Appended by trace_builder | category + intent + confidence</text>
+
+  <!-- Connection: Trace layer <-> Inner graph -->
+  <text x="870" y="190" class="annotation" transform="rotate(-90, 870, 190)">trace is the RAW data</text>
+  <text x="885" y="190" class="annotation" transform="rotate(-90, 885, 190)">inner graph CLASSIFIES it</text>
+
+  <!-- ===== LEGEND ===== -->
+  <rect x="40" y="900" width="1320" height="120" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="60" y="925" class="node-label">Legend</text>
+
+  <rect x="60" y="940" width="14" height="14" class="legend-box" fill="var(--green)" opacity="0.5"/>
+  <text x="80" y="952" class="legend-text">Outer Pipeline node</text>
+
+  <rect x="230" y="940" width="14" height="14" class="legend-box" fill="var(--purple)" opacity="0.5"/>
+  <text x="250" y="952" class="legend-text">Inner Graph node</text>
+
+  <rect x="400" y="940" width="14" height="14" class="legend-box" fill="var(--blue)" opacity="0.5"/>
+  <text x="420" y="952" class="legend-text">LLM call node</text>
+
+  <rect x="560" y="940" width="14" height="14" class="legend-box" fill="var(--orange)" opacity="0.5"/>
+  <text x="580" y="952" class="legend-text">Validation / decision</text>
+
+  <rect x="740" y="940" width="14" height="14" class="legend-box" fill="var(--cyan)" opacity="0.5"/>
+  <text x="760" y="952" class="legend-text">Agent Trace element</text>
+
+  <rect x="940" y="940" width="14" height="14" class="legend-box" fill="var(--pink)" opacity="0.5"/>
+  <text x="960" y="952" class="legend-text">Subagent</text>
+
+  <rect x="1100" y="940" width="14" height="14" class="legend-box" fill="var(--red)" opacity="0.5"/>
+  <text x="1120" y="952" class="legend-text">Error / Issue marker</text>
+
+  <line x1="60" y1="978" x2="100" y2="978" class="edge-line" stroke="var(--green)"/>
+  <text x="108" y="982" class="legend-text">Data flow</text>
+
+  <line x1="200" y1="978" x2="240" y2="978" class="edge-line" stroke="var(--blue)" stroke-dasharray="6 3"/>
+  <text x="248" y="982" class="legend-text">Fan-out (Send)</text>
+
+  <line x1="380" y1="978" x2="420" y2="978" class="edge-line" stroke="var(--red)"/>
+  <text x="428" y="982" class="legend-text">Retry loop</text>
+
+  <line x1="560" y1="978" x2="600" y2="978" class="edge-line" stroke="var(--cyan)" stroke-dasharray="6 3"/>
+  <text x="608" y="982" class="legend-text">Heuristic bypass</text>
+
+  <text x="780" y="982" class="issue-marker">!</text>
+  <text x="798" y="982" class="legend-text">Known issue (see tooltip)</text>
+</svg>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 2: Outer Pipeline Detail -->
+<!-- ============================================================ -->
+<div class="canvas-container hidden" id="tab-outer">
+<svg viewBox="0 0 900 900" width="900" height="900">
+  <text x="450" y="35" text-anchor="middle" class="section-title">Outer Pipeline Graph (PipelineState)</text>
+
+  <!-- PipelineState fields -->
+  <rect x="50" y="60" width="280" height="140" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="70" y="85" class="node-label">PipelineState (TypedDict)</text>
+  <text x="70" y="108" class="state-field">csv_paths: list[str]</text>
+  <text x="70" y="125" class="state-field">limit: int</text>
+  <text x="70" y="142" class="state-field">rows: list[dict]</text>
+  <text x="70" y="159" class="state-field">classifications: Annotated[list, operator.add]</text>
+  <text x="70" y="176" class="state-field">summary: dict | None</text>
+
+  <!-- Config -->
+  <rect x="570" y="60" width="280" height="120" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="590" y="85" class="node-label">Runtime Config</text>
+  <text x="590" y="108" class="state-field">thread_id: uuid4()</text>
+  <text x="590" y="125" class="state-field">max_concurrency: 80 (from CLI)</text>
+  <text x="590" y="142" class="state-field">checkpointer: MemorySaver (in-memory)</text>
+  <text x="590" y="159" class="warn-text">^ ephemeral, no crash recovery</text>
+
+  <!-- Graph nodes -->
+  <rect x="350" y="230" width="200" height="44" class="node-rect" fill="var(--surface2)" stroke="var(--green)"/>
+  <text x="450" y="257" text-anchor="middle" class="node-label">START</text>
+
+  <line x1="450" y1="274" x2="450" y2="310" class="edge-line" stroke="var(--green)"/>
+  <polygon points="444,305 450,315 456,305" class="arrow" fill="var(--green)"/>
+
+  <rect x="350" y="315" width="200" height="60" class="node-rect" fill="var(--surface2)" stroke="var(--green)"
+    data-tip="<h4>load_csv &mdash; nodes.py:85-97</h4><div class='field'><b>Input:</b> csv_paths, limit<br><b>Process:</b><br>1. <code>parse_multiple_csvs()</code> &mdash; multiprocessing for >100 rows<br>2. Per row: JSON parse request/response/extra<br>3. <code>extract_conversation_signal()</code> &mdash; user text, tools, flags<br>4. <code>extract_tool_errors()</code> &mdash; error detection + recovery tracking<br>5. <code>extract_token_usage()</code><br>6. Truncate all output files<br>7. Init progress bar<br><b>Output:</b> <code>{rows: [parsed_dicts]}</code></div>"/>
+  <text x="450" y="342" text-anchor="middle" class="node-label">load_csv</text>
+  <text x="450" y="360" text-anchor="middle" class="node-sublabel">parse_multiple_csvs() + extract signals</text>
+
+  <line x1="450" y1="375" x2="450" y2="415" class="edge-line" stroke="var(--green)"/>
+  <polygon points="444,410 450,420 456,410" class="arrow" fill="var(--green)"/>
+  <text x="465" y="400" class="data-flow">rows: [{sid, signals, errors, ...}]</text>
+
+  <rect x="350" y="420" width="200" height="60" class="node-rect" fill="var(--surface2)" stroke="var(--blue)"
+    data-tip="<h4>fan_out_to_classify &mdash; nodes.py:100-136</h4><div class='field'><b>Input:</b> state.rows<br><b>Process:</b> Creates <code>Send('classify_row', {...})</code> per row<br><b>Output:</b> list[Send] &mdash; LangGraph fans out to inner subgraph<br><br>Each Send copies 20+ fields manually. <b>Fragile</b> &mdash; new parser fields silently dropped.</div>"/>
+  <text x="450" y="447" text-anchor="middle" class="node-label">fan_out_to_classify</text>
+  <text x="450" y="465" text-anchor="middle" class="node-sublabel">Send('classify_row', row) x N</text>
+
+  <!-- Fan-out visual -->
+  <line x1="450" y1="480" x2="300" y2="540" class="edge-line" stroke="var(--blue)" stroke-dasharray="5 3" opacity="0.4"/>
+  <line x1="450" y1="480" x2="450" y2="540" class="edge-line" stroke="var(--blue)" stroke-dasharray="5 3"/>
+  <line x1="450" y1="480" x2="600" y2="540" class="edge-line" stroke="var(--blue)" stroke-dasharray="5 3" opacity="0.4"/>
+  <polygon points="444,535 450,545 456,535" class="arrow" fill="var(--blue)"/>
+
+  <rect x="250" y="545" width="120" height="40" class="node-rect" fill="var(--surface2)" stroke="var(--purple)" opacity="0.5"/>
+  <text x="310" y="570" text-anchor="middle" class="node-sublabel">inner graph</text>
+
+  <rect x="390" y="545" width="120" height="40" class="node-rect" fill="var(--surface2)" stroke="var(--purple)"/>
+  <text x="450" y="567" text-anchor="middle" class="node-label" font-size="11">classify_row</text>
+  <text x="450" y="580" text-anchor="middle" class="node-detail">inner subgraph</text>
+
+  <rect x="530" y="545" width="120" height="40" class="node-rect" fill="var(--surface2)" stroke="var(--purple)" opacity="0.5"/>
+  <text x="590" y="570" text-anchor="middle" class="node-sublabel">inner graph</text>
+
+  <text x="450" y="610" text-anchor="middle" class="connector-label">... x N parallel (max_concurrency)</text>
+
+  <!-- Converge -->
+  <line x1="310" y1="585" x2="450" y2="640" class="edge-line" stroke="var(--green)" stroke-dasharray="5 3" opacity="0.4"/>
+  <line x1="450" y1="585" x2="450" y2="640" class="edge-line" stroke="var(--green)"/>
+  <line x1="590" y1="585" x2="450" y2="640" class="edge-line" stroke="var(--green)" stroke-dasharray="5 3" opacity="0.4"/>
+  <polygon points="444,635 450,645 456,635" class="arrow" fill="var(--green)"/>
+  <text x="465" y="632" class="data-flow">classifications: [...] (operator.add)</text>
+
+  <rect x="350" y="645" width="200" height="60" class="node-rect" fill="var(--surface2)" stroke="var(--green)"
+    data-tip="<h4>aggregate_results &mdash; nodes.py:139-185</h4><div class='field'><b>Input:</b> all classifications via operator.add reducer<br><b>Process:</b><br>1. Close progress bar<br>2. Build summary: category_counts, model_category, language, confidence, error_stats, token_usage<br>3. Write summary.json<br>4. Print console summary<br><b>Output:</b> <code>{summary: {...}}</code><br><br><b>Note:</b> model_category cross-tab computed but never shown in frontend</div>"/>
+  <text x="450" y="672" text-anchor="middle" class="node-label">aggregate_results</text>
+  <text x="450" y="690" text-anchor="middle" class="node-sublabel">build + write summary.json</text>
+
+  <line x1="450" y1="705" x2="450" y2="740" class="edge-line" stroke="var(--green)"/>
+  <polygon points="444,735 450,745 456,735" class="arrow" fill="var(--green)"/>
+
+  <rect x="350" y="745" width="200" height="44" class="node-rect" fill="var(--surface2)" stroke="var(--green)"/>
+  <text x="450" y="772" text-anchor="middle" class="node-label">END</text>
+
+  <!-- Output files -->
+  <rect x="680" y="700" width="190" height="120" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="700" y="725" class="node-label">Output Files</text>
+  <text x="700" y="748" class="state-field">classifications.jsonl</text>
+  <text x="700" y="765" class="state-field">inner_graph_details.jsonl</text>
+  <text x="700" y="782" class="state-field">error_report.jsonl</text>
+  <text x="700" y="799" class="state-field">validation_errors.jsonl</text>
+  <text x="700" y="816" class="state-field">summary.json</text>
+</svg>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 3: Inner Self-Correction -->
+<!-- ============================================================ -->
+<div class="canvas-container hidden" id="tab-inner">
+<svg viewBox="0 0 1000 950" width="1000" height="950">
+  <text x="500" y="35" text-anchor="middle" class="section-title">Inner Graph &mdash; Self-Correction Loop (per row)</text>
+
+  <!-- RowState fields -->
+  <rect x="30" y="60" width="300" height="310" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="50" y="85" class="node-label">RowState (TypedDict)</text>
+  <text x="50" y="108" class="state-field" fill="var(--text2)">--- Input (set once) ---</text>
+  <text x="50" y="125" class="state-field">sid, account, model, event_time</text>
+  <text x="50" y="142" class="state-field">system_prompt_summary: str</text>
+  <text x="50" y="159" class="state-field">user_messages_text: str</text>
+  <text x="50" y="176" class="state-field">tool_names_used: list[str]</text>
+  <text x="50" y="193" class="state-field">num_messages, num_user_messages</text>
+  <text x="50" y="210" class="state-field">is_cron_triggered, is_subagent</text>
+  <text x="50" y="232" class="state-field" fill="var(--text2)">--- Error fields (from parser) ---</text>
+  <text x="50" y="249" class="state-field">tool_errors: list[dict]</text>
+  <text x="50" y="266" class="state-field">tool_error_count, error_rate</text>
+  <text x="50" y="283" class="state-field">consecutive_error_max, token_usage</text>
+  <text x="50" y="305" class="state-field" fill="var(--text2)">--- Loop control ---</text>
+  <text x="50" y="322" class="state-field">error: "yes" | "no"</text>
+  <text x="50" y="339" class="state-field">messages: Annotated[list, add_messages]</text>
+  <text x="50" y="356" class="state-field">classification: Classification | None</text>
+  <text x="50" y="370" class="state-field">iterations: int</text>
+
+  <!-- Classification model -->
+  <rect x="30" y="400" width="300" height="180" rx="8" fill="var(--surface)" stroke="var(--purple)"/>
+  <text x="50" y="425" class="node-label" fill="var(--purple)">Classification (Pydantic)</text>
+  <text x="50" y="448" class="state-field">primary_category: CategoryType</text>
+  <text x="50" y="465" class="state-field">  (12 categories: coding, file_mgmt, ...)</text>
+  <text x="50" y="482" class="state-field">subcategory: str (free text!)</text>
+  <text x="50" y="499" class="state-field">user_intent_summary: str</text>
+  <text x="50" y="516" class="state-field">language: "zh" | "en" | "mixed"</text>
+  <text x="50" y="533" class="state-field">is_cron_triggered: bool</text>
+  <text x="50" y="550" class="state-field">is_subagent: bool</text>
+  <text x="50" y="567" class="state-field">confidence: "high" | "medium" | "low"</text>
+
+  <!-- Graph -->
+  <rect x="430" y="80" width="200" height="40" class="node-rect" fill="var(--surface2)" stroke="var(--purple)"/>
+  <text x="530" y="105" text-anchor="middle" class="node-label">START</text>
+
+  <line x1="530" y1="120" x2="530" y2="155" class="edge-line" stroke="var(--purple)"/>
+  <polygon points="524,150 530,160 536,150" class="arrow" fill="var(--purple)"/>
+
+  <!-- extract_signal -->
+  <rect x="420" y="160" width="220" height="70" class="node-rect" fill="var(--surface2)" stroke="var(--purple)"
+    data-tip="<h4>extract_signal</h4><div class='field'>Checks heuristic patterns first.<br>If match: returns pre-built Classification, iterations=0<br>If not: builds LLM prompt messages<br><br>Heuristic patterns:<br>&bull; 'Read HEARTBEAT.md'<br>&bull; 'HEARTBEAT_OK'<br>&bull; 'HEARTBEAT.md if it exists'<br>&bull; '(session bootstrap)'<br>&bull; empty text</div>"/>
+  <text x="530" y="190" text-anchor="middle" class="node-label">extract_signal</text>
+  <text x="530" y="210" text-anchor="middle" class="node-sublabel">heuristic check OR build LLM prompt</text>
+  <text x="530" y="224" text-anchor="middle" class="node-detail">iterations = 0</text>
+
+  <!-- route_after_extract diamond -->
+  <polygon points="530,260 560,280 530,300 500,280" fill="var(--surface2)" stroke="var(--orange)" stroke-width="2"/>
+  <text x="530" y="284" text-anchor="middle" font-size="9" fill="var(--orange)" font-weight="bold">route</text>
+
+  <line x1="530" y1="230" x2="530" y2="260" class="edge-line" stroke="var(--purple)"/>
+
+  <!-- already_classified path (left) -->
+  <path d="M 500 280 Q 380 280 380 650 Q 380 690 420 690" class="edge-line" stroke="var(--cyan)" stroke-dasharray="6 3"/>
+  <polygon points="415,685 425,690 415,695" class="arrow" fill="var(--cyan)"/>
+  <text x="358" y="325" class="connector-label" fill="var(--cyan)">already_classified</text>
+  <text x="358" y="340" class="node-detail">(heuristic matched)</text>
+  <text x="358" y="355" class="node-detail">iterations = 0</text>
+
+  <!-- needs_llm path (down) -->
+  <line x1="530" y1="300" x2="530" y2="350" class="edge-line" stroke="var(--purple)"/>
+  <polygon points="524,345 530,355 536,345" class="arrow" fill="var(--purple)"/>
+  <text x="545" y="330" class="connector-label">needs_llm</text>
+
+  <!-- classify -->
+  <rect x="420" y="355" width="220" height="80" class="node-rect" fill="var(--surface2)" stroke="var(--blue)"
+    data-tip="<h4>classify</h4><div class='field'><b>LLM Call</b><br>Model: doubao-seed-2-0-pro-260215 (or env override)<br>Temperature: 0<br>API retry: 3 attempts, exponential backoff<br><br><b>Message flow:</b><br>Iter 1: [SystemMsg(prompt), HumanMsg(user_data)]<br>Iter 2: + [HumanMsg(attempt#1), HumanMsg(error feedback), ...]<br><br><b>JSON parsing:</b> tries ```json``` block, then bare {}, then regex fallback, then default 'other/parse_failed'<br><br><b>Enum fixing:</b> invalid category/language/confidence values corrected before Pydantic</div>"/>
+  <text x="530" y="385" text-anchor="middle" class="node-label">classify</text>
+  <text x="530" y="403" text-anchor="middle" class="node-sublabel">LLM call &rarr; parse JSON &rarr; Classification</text>
+  <text x="530" y="420" text-anchor="middle" class="node-detail">temperature=0 | RetryPolicy(3)</text>
+  <text x="530" y="432" text-anchor="middle" class="node-detail">appends attempt as HumanMessage</text>
+
+  <line x1="530" y1="435" x2="530" y2="475" class="edge-line" stroke="var(--purple)"/>
+  <polygon points="524,470 530,480 536,470" class="arrow" fill="var(--purple)"/>
+
+  <!-- validate -->
+  <rect x="420" y="480" width="220" height="95" class="node-rect" fill="var(--surface2)" stroke="var(--orange)"
+    data-tip="<h4>validate</h4><div class='field'><b>5 checks:</b><br>1. feishu tools &rarr; must be communication<br>2. [cron:] &rarr; is_cron_triggered=true<br>3. CJK ratio >30% &rarr; not 'en'; <5% &rarr; not 'zh'<br>4. intent summary &ge; 10 chars<br>5. coding category &rarr; needs coding tools (exec/read/write/edit)<br><br><b>On fail:</b> error='yes', feedback HumanMessage added<br><b>On pass:</b> error='no'</div>"/>
+  <text x="530" y="510" text-anchor="middle" class="node-label">validate</text>
+  <text x="530" y="528" text-anchor="middle" class="node-sublabel">5 consistency checks</text>
+  <text x="530" y="543" text-anchor="middle" class="node-detail">1. feishu &rarr; communication</text>
+  <text x="530" y="555" text-anchor="middle" class="node-detail">2. cron flag | 3. CJK ratio</text>
+  <text x="530" y="567" text-anchor="middle" class="node-detail">4. summary length | 5. coding tools</text>
+
+  <!-- decide_to_finish diamond -->
+  <polygon points="530,605 570,630 530,655 490,630" fill="var(--surface2)" stroke="var(--orange)" stroke-width="2"/>
+  <text x="530" y="633" text-anchor="middle" font-size="8" fill="var(--orange)" font-weight="600">decide</text>
+
+  <line x1="530" y1="575" x2="530" y2="605" class="edge-line" stroke="var(--orange)"/>
+
+  <!-- retry path (right loop) -->
+  <path d="M 570 630 Q 700 630 700 410 Q 700 375 640 385" class="edge-line" stroke="var(--red)" stroke-width="2.5"/>
+  <polygon points="645,379 635,385 645,391" class="arrow" fill="var(--red)"/>
+  <text x="715" y="500" class="connector-label" fill="var(--red)">retry</text>
+  <text x="715" y="518" class="node-detail" fill="var(--red)">error='yes' AND</text>
+  <text x="715" y="533" class="node-detail" fill="var(--red)">iterations &lt; 3</text>
+
+  <!-- Iteration counter -->
+  <rect x="710" y="545" width="160" height="70" rx="6" fill="rgba(248,81,73,0.08)" stroke="var(--red)" stroke-width="1" stroke-dasharray="4 2"/>
+  <text x="730" y="565" class="node-detail" fill="var(--red)">Self-correction budget:</text>
+  <text x="730" y="580" class="state-field" fill="var(--red)">MAX_ITERATIONS = 3</text>
+  <text x="730" y="598" class="node-detail" fill="var(--red)">Worst case with API retries:</text>
+  <text x="730" y="610" class="state-field" fill="var(--red)">3 x 3 = 9 LLM calls/row</text>
+
+  <!-- end path (down) -->
+  <line x1="530" y1="655" x2="530" y2="670" class="edge-line" stroke="var(--green)"/>
+  <polygon points="524,665 530,675 536,665" class="arrow" fill="var(--green)"/>
+  <text x="545" y="668" class="connector-label" fill="var(--green)">end</text>
+
+  <!-- format_result -->
+  <rect x="420" y="675" width="220" height="75" class="node-rect" fill="var(--surface2)" stroke="var(--green)"
+    data-tip="<h4>format_result</h4><div class='field'><b>Writes 3 files:</b><br>1. <code>classifications.jsonl</code> (thread-safe, locked)<br>2. <code>inner_graph_details.jsonl</code> (NO lock!)<br>3. <code>error_report.jsonl</code> if errors (NO lock!)<br><br><b>Returns:</b> <code>{classifications: [result]}</code> for outer graph reducer<br><b>Ticks:</b> progress bar</div>"/>
+  <text x="530" y="705" text-anchor="middle" class="node-label">format_result</text>
+  <text x="530" y="723" text-anchor="middle" class="node-sublabel">write JSONL files + tick progress</text>
+  <text x="530" y="740" text-anchor="middle" class="node-detail">return {classifications: [result]}</text>
+
+  <line x1="530" y1="750" x2="530" y2="785" class="edge-line" stroke="var(--green)"/>
+  <polygon points="524,780 530,790 536,780" class="arrow" fill="var(--green)"/>
+
+  <rect x="430" y="790" width="200" height="40" class="node-rect" fill="var(--surface2)" stroke="var(--green)"/>
+  <text x="530" y="815" text-anchor="middle" class="node-label">END</text>
+
+  <!-- Message history evolution -->
+  <rect x="710" y="160" width="260" height="200" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="730" y="185" class="node-label">Message History Evolution</text>
+
+  <text x="730" y="210" class="node-sublabel" fill="var(--cyan)">Iteration 1:</text>
+  <text x="730" y="226" class="state-field">SystemMessage(CLASSIFY_PROMPT)</text>
+  <text x="730" y="241" class="state-field">HumanMessage(user_data)</text>
+
+  <text x="730" y="265" class="node-sublabel" fill="var(--cyan)">Iteration 2 (after retry):</text>
+  <text x="730" y="281" class="state-field">+ HumanMessage(attempt #1 JSON)</text>
+  <text x="730" y="296" class="state-field">+ HumanMessage(validation errors)</text>
+  <text x="730" y="311" class="warn-text">^ attempt stored as HumanMessage</text>
+  <text x="730" y="326" class="warn-text">  should be AIMessage for clarity</text>
+
+  <text x="730" y="350" class="node-sublabel" fill="var(--cyan)">Iteration 3:</text>
+  <text x="730" y="366" class="state-field">+ HumanMessage(attempt #2 JSON)</text>
+  <text x="730" y="381" class="state-field">+ HumanMessage(more errors)</text>
+</svg>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 4: Agent Trace Layer -->
+<!-- ============================================================ -->
+<div class="canvas-container hidden" id="tab-trace">
+<svg viewBox="0 0 1100 1050" width="1100" height="1050">
+  <text x="550" y="35" text-anchor="middle" class="section-title">Agent Trace Layer &mdash; What the LLM Agent Actually Did</text>
+  <text x="550" y="55" text-anchor="middle" class="section-subtitle">Extracted from CSV request JSON by extract_traces.py &rarr; Visualized by trace_builder.py in React Flow</text>
+
+  <!-- The trace structure -->
+  <rect x="50" y="85" width="500" height="850" class="group-rect" stroke="var(--cyan)" fill="var(--cyan)"/>
+  <text x="70" y="110" class="group-label" fill="var(--cyan)">Agent Session Trace (messages array in request JSON)</text>
+
+  <!-- System prompt -->
+  <rect x="80" y="130" width="440" height="60" class="node-rect" fill="var(--surface2)" stroke="#7B1FA2"/>
+  <text x="100" y="152" class="node-label" fill="#CE93D8">system</text>
+  <text x="100" y="172" class="node-sublabel">Agent's system prompt &mdash; defines capabilities, personality, constraints</text>
+  <text x="100" y="185" class="node-detail">Extracted as system_prompt_summary (500 chars) for classification</text>
+
+  <line x1="300" y1="190" x2="300" y2="215" class="edge-line" stroke="var(--text2)"/>
+  <polygon points="294,210 300,220 306,210" class="arrow" fill="var(--text2)"/>
+
+  <!-- User message 1 -->
+  <rect x="80" y="220" width="440" height="55" class="node-rect" fill="var(--surface2)" stroke="#1565C0"/>
+  <text x="100" y="242" class="node-label" fill="#64B5F6">user</text>
+  <text x="200" y="242" class="node-sublabel">Initial request from human (or cron trigger: "[cron: task_name]")</text>
+  <text x="100" y="262" class="node-detail">Extracted as user_messages_text (first msg, up to 1500 chars)</text>
+
+  <line x1="300" y1="275" x2="300" y2="300" class="edge-line" stroke="var(--text2)"/>
+  <polygon points="294,295 300,305 306,295" class="arrow" fill="var(--text2)"/>
+
+  <!-- Turn 1 -->
+  <rect x="95" y="305" width="415" height="280" class="group-rect" stroke="var(--text2)" fill="var(--text2)"/>
+  <text x="115" y="330" class="group-label" fill="var(--text2)">TURN 1 &mdash; Agent acts on user request</text>
+
+  <!-- Assistant with tool_calls -->
+  <rect x="120" y="345" width="190" height="55" class="node-rect" fill="var(--surface2)" stroke="#388E3C"/>
+  <text x="140" y="367" class="node-label" fill="#81C784">assistant</text>
+  <text x="140" y="387" class="node-sublabel">tool_calls: [{name, args}]</text>
+
+  <!-- Arrow to tool results -->
+  <line x1="215" y1="400" x2="215" y2="425" class="edge-line" stroke="#388E3C"/>
+  <polygon points="209,420 215,430 221,420" class="arrow" fill="#388E3C"/>
+
+  <!-- Tool result (success) -->
+  <rect x="120" y="430" width="150" height="45" class="node-rect" fill="var(--surface2)" stroke="#2E7D32"/>
+  <text x="140" y="452" class="node-label" fill="#A5D6A7">tool (result)</text>
+  <text x="140" y="467" class="node-sublabel">success</text>
+
+  <!-- Tool result (error) -->
+  <rect x="290" y="430" width="190" height="45" class="node-rect" fill="var(--surface2)" stroke="#C62828"/>
+  <text x="310" y="452" class="node-label" fill="#EF9A9A">tool (error)</text>
+  <text x="310" y="467" class="node-sublabel">is_error detected</text>
+
+  <!-- Second tool call (retry after error) -->
+  <line x1="385" y1="475" x2="385" y2="500" class="edge-line" stroke="#C62828"/>
+  <polygon points="379,495 385,505 391,495" class="arrow" fill="#C62828)"/>
+
+  <rect x="320" y="505" width="170" height="45" class="node-rect" fill="var(--surface2)" stroke="#388E3C"/>
+  <text x="340" y="527" class="node-label" fill="#81C784">assistant</text>
+  <text x="340" y="542" class="node-sublabel">retry tool_calls</text>
+
+  <!-- Agent response (end of turn) -->
+  <line x1="300" y1="555" x2="300" y2="600" class="edge-line" stroke="var(--text2)"/>
+  <polygon points="294,595 300,605 306,595" class="arrow" fill="var(--text2)"/>
+
+  <rect x="80" y="605" width="440" height="50" class="node-rect" fill="var(--surface2)" stroke="#2E7D32"/>
+  <text x="100" y="627" class="node-label" fill="#A5D6A7">assistant (response)</text>
+  <text x="100" y="647" class="node-sublabel">Text response to user &mdash; no tool_calls (turn complete)</text>
+
+  <!-- User follow-up -->
+  <line x1="300" y1="655" x2="300" y2="685" class="edge-line" stroke="var(--text2)"/>
+  <polygon points="294,680 300,690 306,680" class="arrow" fill="var(--text2)"/>
+
+  <rect x="80" y="690" width="440" height="45" class="node-rect" fill="var(--surface2)" stroke="#1565C0"/>
+  <text x="100" y="712" class="node-label" fill="#64B5F6">user</text>
+  <text x="200" y="712" class="node-sublabel">Follow-up message (last user msg extracted for classification)</text>
+
+  <!-- Turn 2 placeholder -->
+  <rect x="95" y="755" width="415" height="50" class="group-rect" stroke="var(--text2)" fill="var(--text2)"/>
+  <text x="300" y="785" text-anchor="middle" class="group-label" fill="var(--text2)">TURN 2 ... N (repeat pattern)</text>
+
+  <!-- Subagent spawning -->
+  <rect x="95" y="825" width="415" height="95" class="group-rect" stroke="var(--pink)" fill="var(--pink)"/>
+  <text x="115" y="850" class="group-label" fill="var(--pink)">SUBAGENT SPAWNING</text>
+  <text x="115" y="870" class="node-sublabel">If agent calls orchestration tools, child sessions appear as separate CSV rows</text>
+  <text x="115" y="888" class="node-sublabel">Detection: keyword "Subagent" or "sub-agent" in user messages</text>
+  <text x="115" y="906" class="warn-text">No parent-child link tracked &mdash; sessions classified independently</text>
+
+  <!-- Right side: How trace maps to classification -->
+  <rect x="600" y="85" width="460" height="460" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="620" y="115" class="node-label">How Trace Maps to Classification Input</text>
+
+  <text x="620" y="150" class="node-sublabel" fill="var(--cyan)">From system message:</text>
+  <text x="620" y="170" class="state-field">system_prompt_summary = content[:500]</text>
+
+  <text x="620" y="200" class="node-sublabel" fill="var(--cyan)">From user messages (first + last):</text>
+  <text x="620" y="220" class="state-field">user_messages_text = truncate(first + last, 3000)</text>
+  <text x="620" y="237" class="state-field">is_cron_triggered = starts_with("[cron:")</text>
+  <text x="620" y="254" class="state-field">is_subagent = contains("Subagent")</text>
+
+  <text x="620" y="284" class="node-sublabel" fill="var(--cyan)">From assistant tool_calls:</text>
+  <text x="620" y="304" class="state-field">tool_names_used = set of all function names</text>
+
+  <text x="620" y="334" class="node-sublabel" fill="var(--cyan)">From tool results (error detection):</text>
+  <text x="620" y="354" class="state-field">tool_error_count, error_rate</text>
+  <text x="620" y="371" class="state-field">error_types: [permission, not_found, ...]</text>
+  <text x="620" y="388" class="state-field">consecutive_error_max</text>
+  <text x="620" y="405" class="state-field">tool_errors: [{tool, type, text, recovered}]</text>
+
+  <text x="620" y="435" class="node-sublabel" fill="var(--cyan)">From response JSON:</text>
+  <text x="620" y="455" class="state-field">finish_reason: "stop" | "length" | ...</text>
+
+  <text x="620" y="485" class="node-sublabel" fill="var(--cyan)">From extra JSON:</text>
+  <text x="620" y="505" class="state-field">token_usage: {prompt, completion, total}</text>
+  <text x="620" y="525" class="state-field">num_messages, num_user_messages</text>
+
+  <!-- React Flow visualization mapping -->
+  <rect x="600" y="570" width="460" height="350" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="620" y="600" class="node-label">React Flow Visualization Layout</text>
+
+  <text x="620" y="630" class="node-sublabel" fill="var(--text2)">X positioning (layer separation):</text>
+  <text x="620" y="650" class="state-field">x=50  : system, user, assistant (outer layer)</text>
+  <text x="620" y="667" class="state-field">x=200 : tool_calls (agent decisions)</text>
+  <text x="620" y="684" class="state-field">x=420 : tool_results (execution results)</text>
+
+  <text x="620" y="714" class="node-sublabel" fill="var(--text2)">Node types &amp; colors:</text>
+  <rect x="620" y="725" width="12" height="12" fill="#7B1FA2" rx="2"/>
+  <text x="640" y="736" class="state-field">system    &mdash; purple (agentNodeWide)</text>
+  <rect x="620" y="745" width="12" height="12" fill="#1565C0" rx="2"/>
+  <text x="640" y="756" class="state-field">user      &mdash; blue   (agentNodeWide)</text>
+  <rect x="620" y="765" width="12" height="12" fill="#388E3C" rx="2"/>
+  <text x="640" y="776" class="state-field">tool_calls &mdash; green  (agentNode)</text>
+  <rect x="620" y="785" width="12" height="12" fill="#2E7D32" rx="2"/>
+  <text x="640" y="796" class="state-field">tool_result &mdash; dark green (agentNode)</text>
+  <rect x="620" y="805" width="12" height="12" fill="#C62828" rx="2"/>
+  <text x="640" y="816" class="state-field">tool_error  &mdash; red (agentNode)</text>
+  <rect x="620" y="825" width="12" height="12" fill="#2E7D32" rx="2"/>
+  <text x="640" y="836" class="state-field">assistant  &mdash; green  (agentNodeWide)</text>
+  <rect x="620" y="845" width="12" height="12" fill="#4527A0" rx="2"/>
+  <text x="640" y="856" class="state-field">classification &mdash; purple (appended at end)</text>
+
+  <text x="620" y="886" class="node-sublabel" fill="var(--text2)">Grouping:</text>
+  <text x="620" y="906" class="state-field">Turns: user msg + subsequent tools + agent response</text>
+</svg>
+</div>
+
+<!-- ============================================================ -->
+<!-- TAB 5: Data Flow & State -->
+<!-- ============================================================ -->
+<div class="canvas-container hidden" id="tab-data">
+<svg viewBox="0 0 1200 850" width="1200" height="850">
+  <text x="600" y="35" text-anchor="middle" class="section-title">Data Flow &amp; File I/O</text>
+
+  <!-- Input -->
+  <rect x="50" y="70" width="200" height="60" class="node-rect" fill="var(--surface2)" stroke="var(--yellow)"/>
+  <text x="150" y="95" text-anchor="middle" class="node-label" fill="var(--yellow)">CSV Input</text>
+  <text x="150" y="115" text-anchor="middle" class="node-sublabel">sid, account, model, request, response, extra</text>
+
+  <line x1="250" y1="100" x2="310" y2="100" class="edge-line" stroke="var(--yellow)"/>
+  <polygon points="305,94 315,100 305,106" class="arrow" fill="var(--yellow)"/>
+
+  <!-- Parser -->
+  <rect x="315" y="70" width="250" height="120" class="node-rect" fill="var(--surface2)" stroke="var(--purple)"/>
+  <text x="440" y="95" text-anchor="middle" class="node-label">parser.py</text>
+  <text x="335" y="118" class="state-field">extract_conversation_signal()</text>
+  <text x="335" y="135" class="state-field">extract_tool_errors()</text>
+  <text x="335" y="152" class="state-field">extract_token_usage()</text>
+  <text x="335" y="169" class="state-field">_extract_finish_reason()</text>
+
+  <line x1="565" y1="130" x2="630" y2="130" class="edge-line" stroke="var(--green)"/>
+  <polygon points="625,124 635,130 625,136" class="arrow" fill="var(--green)"/>
+
+  <!-- Parsed Row -->
+  <rect x="635" y="70" width="250" height="145" class="node-rect" fill="var(--surface2)" stroke="var(--green)"/>
+  <text x="760" y="95" text-anchor="middle" class="node-label">Parsed Row Dict</text>
+  <text x="655" y="118" class="state-field">sid, account, model, event_time</text>
+  <text x="655" y="135" class="state-field">system_prompt_summary: str[:500]</text>
+  <text x="655" y="152" class="state-field">user_messages_text: str[:3000]</text>
+  <text x="655" y="169" class="state-field">tool_names_used: list[str]</text>
+  <text x="655" y="186" class="state-field">tool_errors, error_types, error_rate</text>
+  <text x="655" y="203" class="state-field">token_usage, finish_reason</text>
+
+  <line x1="760" y1="215" x2="760" y2="260" class="edge-line" stroke="var(--blue)" stroke-dasharray="5 3"/>
+  <polygon points="754,255 760,265 766,255" class="arrow" fill="var(--blue)"/>
+  <text x="775" y="242" class="connector-label">Send() per row</text>
+
+  <!-- Inner Graph -->
+  <rect x="580" y="270" width="360" height="180" class="node-rect" fill="var(--surface2)" stroke="var(--purple)"/>
+  <text x="760" y="295" text-anchor="middle" class="node-label">Inner Graph (RowState)</text>
+  <text x="600" y="320" class="node-sublabel" fill="var(--cyan)">extract_signal</text>
+  <text x="600" y="338" class="state-field">  &rarr; heuristic Classification OR LLM prompt messages</text>
+  <text x="600" y="360" class="node-sublabel" fill="var(--cyan)">classify (LLM)</text>
+  <text x="600" y="378" class="state-field">  &rarr; Classification (category, subcategory, intent, ...)</text>
+  <text x="600" y="400" class="node-sublabel" fill="var(--cyan)">validate</text>
+  <text x="600" y="418" class="state-field">  &rarr; error feedback OR pass</text>
+  <text x="600" y="440" class="node-sublabel" fill="var(--cyan)">format_result</text>
+
+  <!-- Output files -->
+  <line x1="940" y1="330" x2="1010" y2="280" class="edge-line" stroke="var(--green)"/>
+  <polygon points="1005,275 1015,280 1008,287" class="arrow" fill="var(--green)"/>
+
+  <line x1="940" y1="360" x2="1010" y2="360" class="edge-line" stroke="var(--green)"/>
+  <polygon points="1005,354 1015,360 1005,366" class="arrow" fill="var(--green)"/>
+
+  <line x1="940" y1="390" x2="1010" y2="430" class="edge-line" stroke="var(--red)"/>
+  <polygon points="1005,425 1015,430 1008,437" class="arrow" fill="var(--red)"/>
+
+  <line x1="940" y1="420" x2="1010" y2="500" class="edge-line" stroke="var(--orange)"/>
+  <polygon points="1005,495 1015,500 1008,507" class="arrow" fill="var(--orange)"/>
+
+  <!-- File boxes -->
+  <rect x="1010" y="258" width="170" height="35" rx="6" fill="var(--surface)" stroke="var(--green)"/>
+  <text x="1030" y="280" class="state-field">classifications.jsonl</text>
+  <text x="1030" y="290" class="node-detail" fill="var(--green)">LOCKED writes</text>
+
+  <rect x="1010" y="340" width="170" height="35" rx="6" fill="var(--surface)" stroke="var(--green)"/>
+  <text x="1030" y="362" class="state-field">inner_graph_details.jsonl</text>
+  <text x="1030" y="372" class="node-detail" fill="var(--red)">NO LOCK!</text>
+
+  <rect x="1010" y="410" width="170" height="35" rx="6" fill="var(--surface)" stroke="var(--red)"/>
+  <text x="1030" y="432" class="state-field">error_report.jsonl</text>
+  <text x="1030" y="442" class="node-detail" fill="var(--red)">NO LOCK!</text>
+
+  <rect x="1010" y="480" width="170" height="35" rx="6" fill="var(--surface)" stroke="var(--orange)"/>
+  <text x="1030" y="502" class="state-field">validation_errors.jsonl</text>
+  <text x="1030" y="512" class="node-detail" fill="var(--red)">NO LOCK!</text>
+
+  <!-- Reducer arrow down -->
+  <line x1="760" y1="450" x2="760" y2="510" class="edge-line" stroke="var(--green)"/>
+  <polygon points="754,505 760,515 766,505" class="arrow" fill="var(--green)"/>
+  <text x="775" y="485" class="data-flow">{classifications: [result]}</text>
+  <text x="775" y="500" class="data-flow">via operator.add reducer</text>
+
+  <!-- Aggregate -->
+  <rect x="630" y="520" width="260" height="60" class="node-rect" fill="var(--surface2)" stroke="var(--green)"/>
+  <text x="760" y="545" text-anchor="middle" class="node-label">aggregate_results</text>
+  <text x="760" y="565" text-anchor="middle" class="node-sublabel">_build_summary() &rarr; summary.json</text>
+
+  <line x1="890" y1="550" x2="1010" y2="550" class="edge-line" stroke="var(--green)"/>
+  <polygon points="1005,544 1015,550 1005,556" class="arrow" fill="var(--green)"/>
+
+  <rect x="1010" y="533" width="170" height="35" rx="6" fill="var(--surface)" stroke="var(--green)"/>
+  <text x="1030" y="555" class="state-field">summary.json</text>
+
+  <!-- Frontend data flow -->
+  <line x1="760" y1="580" x2="760" y2="630" class="edge-line" stroke="var(--cyan)" stroke-dasharray="6 3"/>
+  <polygon points="754,625 760,635 766,625" class="arrow" fill="var(--cyan)"/>
+  <text x="620" y="620" class="connector-label" fill="var(--cyan)">Frontend reads output files</text>
+
+  <rect x="500" y="640" width="520" height="180" class="node-rect" fill="var(--surface2)" stroke="var(--cyan)"/>
+  <text x="760" y="665" text-anchor="middle" class="node-label" fill="var(--cyan)">Frontend (FastAPI + React)</text>
+
+  <text x="520" y="695" class="node-sublabel" fill="var(--text2)">data_loader.py:</text>
+  <text x="520" y="715" class="state-field">  DataLoader loads JSONL &rarr; indexes by SID</text>
+  <text x="520" y="732" class="state-field">  check_reload() stats files on every API request</text>
+  <text x="520" y="749" class="state-field">  Merges: classification + inner_details + error_report + agent_trace</text>
+
+  <text x="520" y="775" class="node-sublabel" fill="var(--text2)">server.py (FastAPI):</text>
+  <text x="520" y="795" class="state-field">  REST: /sessions, /summary, /filters, /annotations, /error-sessions</text>
+  <text x="520" y="812" class="state-field">  WebSocket: /ws/replay/{sid} (trace replay animation)</text>
+
+  <!-- extract_traces separate pipeline -->
+  <rect x="50" y="640" width="400" height="100" class="node-rect" fill="var(--surface2)" stroke="var(--pink)"/>
+  <text x="250" y="665" text-anchor="middle" class="node-label" fill="var(--pink)">extract_traces.py (separate CLI)</text>
+  <text x="70" y="695" class="state-field">Reads CSV + classifications.jsonl</text>
+  <text x="70" y="712" class="state-field">Extracts full message flow per session</text>
+  <text x="70" y="729" class="state-field">&rarr; agent_traces.jsonl (steps: [{type, content, ...}])</text>
+
+  <line x1="250" y1="170" x2="250" y2="640" class="edge-line" stroke="var(--pink)" stroke-dasharray="4 3" opacity="0.3"/>
+  <line x1="450" y1="700" x2="500" y2="700" class="edge-line" stroke="var(--pink)" stroke-dasharray="4 3"/>
+  <polygon points="495,694 505,700 495,706" class="arrow" fill="var(--pink)"/>
+</svg>
+</div>
+
+<div class="side-panel" id="sidePanel">
+  <button class="close-btn" onclick="closeSidePanel()">&times;</button>
+  <div id="sidePanelContent"></div>
+</div>
+
+<script>
+// Tab switching
+function showTab(name) {
+  document.querySelectorAll('.canvas-container').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.remove('hidden');
+  event.target.classList.add('active');
+}
+
+// Tooltip
+const tooltip = document.getElementById('tooltip');
+document.querySelectorAll('[data-tip]').forEach(el => {
+  el.addEventListener('mouseenter', e => {
+    tooltip.innerHTML = el.getAttribute('data-tip');
+    tooltip.classList.add('visible');
+  });
+  el.addEventListener('mousemove', e => {
+    const x = e.clientX + 15;
+    const y = e.clientY + 10;
+    const maxX = window.innerWidth - 400;
+    const maxY = window.innerHeight - 200;
+    tooltip.style.left = Math.min(x, maxX) + 'px';
+    tooltip.style.top = Math.min(y, maxY) + 'px';
+  });
+  el.addEventListener('mouseleave', () => {
+    tooltip.classList.remove('visible');
+  });
+});
+
+// Side panel
+function closeSidePanel() {
+  document.getElementById('sidePanel').classList.remove('open');
+}
+</script>
+</body>
+</html>
